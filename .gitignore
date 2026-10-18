@@ -1,0 +1,14 @@
+# Build artifacts
+*.so
+*.dylib
+*.dll
+/hashpw
+
+# Local runtime files
+*.log
+*.tmp
+.DS_Store
+
+# Editor
+.idea/
+.vscode/

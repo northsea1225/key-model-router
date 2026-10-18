@@ -1,0 +1,30 @@
+# 把下面的 plugins 块合并进 CPA 的 config.yaml。
+# 路径请改成实际部署路径，文件属主与权限需在系统侧设置。
+plugins:
+  enabled: true
+  dir: plugins
+  configs:
+    key-model-router:
+      enabled: true
+      priority: 10
+
+      # 设置界面：仅允许 loopback
+      listen: 127.0.0.1:8320
+
+      # 本机 CPA，用于读取 /v1/models
+      cpa_base_url: http://127.0.0.1:8318
+
+      # 只读取其中的 api-keys，用于本地模型探测
+      cpa_config_path: /opt/cpa/config.yaml
+
+      # 路由状态（指纹 -> 目标模型），建议 0600
+      state_file: /opt/cpa/key-model-router.json
+
+      # bcrypt 哈希文件，必须 0600
+      password_file: /opt/cpa/key-model-router.pass
+
+      # 可选：指纹 -> 别名 JSON，用于界面显示
+      # alias_seed_file: /opt/cpa/key-model-router-aliases.json
+
+      model_refresh_seconds: 300
+      session_ttl_seconds: 28800
