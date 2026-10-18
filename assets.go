@@ -123,7 +123,7 @@ function render(state){
   var top=el("div","top");
   var title=el("div");
   title.appendChild(el("h1",null,"Key Model Router"));
-  title.appendChild(el("p","sub","每个下游 API key 固定到一个目标模型；留空表示不路由。"));
+  title.appendChild(el("p","sub","每个下游 API key 固定到一个目标模型；留空表示不路由。"+(state.route_mode==="executor"?"（当前为 executor 兼容模式）":"")));
   top.appendChild(title);
   var logout=el("button",null,"退出登录");
   logout.addEventListener("click",function(){
@@ -154,7 +154,7 @@ function render(state){
   var table=document.createElement("table");
   var thead=document.createElement("thead");
   var hr=document.createElement("tr");
-  ["别名","脱敏 Key","指纹","目标模型"].forEach(function(name){hr.appendChild(el("th",null,name));});
+  ["别名","脱敏 Key","指纹","目标模型","Provider"].forEach(function(name){hr.appendChild(el("th",null,name));});
   thead.appendChild(hr);table.appendChild(thead);
   var tbody=document.createElement("tbody");
   table.appendChild(tbody);
@@ -184,8 +184,14 @@ function render(state){
     }
     select.value=target;
     targetTd.appendChild(select);tr.appendChild(targetTd);
+    var providerTd=document.createElement("td");
+    var provider=document.createElement("input");provider.type="text";provider.maxLength=128;
+    var resolved=(state.model_providers||{})[target]||acc.target_provider||"";
+    provider.value=acc.target_provider||"";
+    provider.placeholder=resolved?resolved:"自动";
+    providerTd.appendChild(provider);tr.appendChild(providerTd);
     tbody.appendChild(tr);
-    rows.push({fingerprint:acc.fingerprint,alias:alias,select:select,tr:tr});
+    rows.push({fingerprint:acc.fingerprint,alias:alias,select:select,provider:provider,tr:tr});
   });
   panel.appendChild(table);root.appendChild(panel);
   if(!rows.length){root.appendChild(el("p","muted","没有从 CPA config.yaml 读取到 api-keys。"));}
@@ -193,7 +199,7 @@ function render(state){
   function submitSave(allowRetry){
     if(busy)return;
     busy=true;save.disabled=true;status.className="muted";status.textContent="保存中…";
-    var payload={rows:rows.map(function(r){return {fingerprint:r.fingerprint,alias:r.alias.value,target_model:r.select.value};}),csrf:CSRF};
+    var payload={rows:rows.map(function(r){return {fingerprint:r.fingerprint,alias:r.alias.value,target_model:r.select.value,target_provider:r.provider.value};}),csrf:CSRF};
     api("/api/save",{method:"POST",body:JSON.stringify(payload)}).then(function(data){
       status.className="ok";status.textContent="已保存 "+fmt(data.saved_at||new Date().toISOString());
       saved.textContent="最近保存："+fmt(data.saved_at||new Date().toISOString());

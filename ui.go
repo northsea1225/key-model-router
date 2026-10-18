@@ -141,7 +141,7 @@ func (h *uiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			methodNotAllowed(w, http.MethodGet)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "version": "0.1.1"})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "version": pluginVersion})
 		return
 	case path == uiBasePath+"/api/state":
 		if _, okSession := h.requireSession(r); !okSession {
@@ -217,7 +217,9 @@ func (h *uiHandler) handleState(w http.ResponseWriter, r *http.Request) {
 		"state_error":         stateErr,
 		"saved_at":            savedAt,
 		"csrf":                sess.CSRF,
-		"version":             "0.1.1",
+		"version":             pluginVersion,
+		"route_mode":          cfg.RouteMode,
+		"model_providers":     h.rt.Models().Providers(),
 		"password_configured": checkPasswordFile(cfg.PasswordFile) == nil,
 		"listen":              cfg.Listen,
 	})
@@ -354,6 +356,7 @@ func (h *uiHandler) handleSave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		target := normalizeTarget(row.TargetModel)
+		provider := normalizeProvider(row.TargetProvider)
 		if target != "" {
 			knownModels, present := h.rt.Models().Has(target)
 			if !knownModels {
@@ -368,18 +371,35 @@ func (h *uiHandler) handleSave(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
+			if provider == "" {
+				if cached, okProvider := h.rt.Models().Provider(target); okProvider {
+					provider = cached
+				}
+			}
+			if provider == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error":       "target model has no known provider; reselect the model",
+					"fingerprint": row.Fingerprint,
+					"field":       "target_model",
+				})
+				return
+			}
+		} else {
+			provider = ""
 		}
 		next[row.Fingerprint] = stateEntry{
-			Alias:       normalizeAlias(row.Alias),
-			TargetModel: target,
+			Alias:          normalizeAlias(row.Alias),
+			TargetModel:    target,
+			TargetProvider: provider,
 		}
 	}
 	rows := make([]stateRow, 0, len(next))
 	for fingerprint, entry := range next {
 		rows = append(rows, stateRow{
-			Fingerprint: fingerprint,
-			Alias:       entry.Alias,
-			TargetModel: entry.TargetModel,
+			Fingerprint:    fingerprint,
+			Alias:          entry.Alias,
+			TargetModel:    entry.TargetModel,
+			TargetProvider: entry.TargetProvider,
 		})
 	}
 	savedAt, errSave := h.rt.State().SaveRows(rows)

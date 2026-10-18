@@ -8,6 +8,10 @@ plugins:
       enabled: true
       priority: 10
 
+      # provider（默认）：CPA 原生执行，插件不接触请求体/响应流
+      # executor：旧兼容模式，插件接管请求并回调宿主
+      route_mode: provider
+
       # 设置界面：仅允许 loopback
       listen: 127.0.0.1:8320
 
@@ -28,3 +32,9 @@ plugins:
 
       model_refresh_seconds: 300
       session_ttl_seconds: 28800
+
+      # 插件自身 Go runtime 的软堆上限（MiB）
+      plugin_memory_limit_mb: 96
+
+      # 仅 executor 模式生效：超过该体积的请求体不路由、原样放行（MiB）
+      max_executor_body_mb: 2

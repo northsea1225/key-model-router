@@ -9,12 +9,15 @@ CLIProxyAPI（CPA）8.0.31 插件：按下游 API Key 把请求固定路由到�
 ## 工作原理
 
 - 注册 `ModelRouter` 钩子（`sdk/pluginapi/types.go` 的 `RouteModel`）。
-- 命中的 Key 返回 `Handled=true`、`TargetKind=self`，交给本插件的 executor。
-- executor 只做一件事：把请求体顶层 `model` 改成目标模型，然后调用宿主
-  `host.model.execute` / `host.model.execute_stream`。
-- 宿主回调会跳过本插件的 router（`SkipRouterPluginID`），因此不会递归；嵌套执行
-  重新走 CPA 原生的 model → provider → auth 选择、重试与冷却逻辑，不需要手写
-  auth ID，也不需要指定 provider。
+- 默认 `route_mode: provider`：命中的 Key 返回 `TargetKind=provider` 加目标模型名，
+  CPA 用**原生**链路执行请求，插件完全不接触请求体和响应流。没有额外拷贝，
+  也不存在“插件再嵌套调用一次 CPA”的放大。
+- 目标模型所属 provider 由三处信息决定：状态文件里的 `target_provider`（优先）→
+  `/v1/models` 的 `owned_by` → `config.yaml` 里声明了该模型且配置了凭据的
+  `openai-compatibility` 条目。只接受 CPA 当前可用的 provider。
+- `route_mode: executor` 是兼容模式：插件接管请求、改写 `model` 后回调
+  `host.model.execute`。功能等价，但请求体要跨 C ABI 复制，内存开销明显更高，
+  只建议在 provider 模式无法覆盖的场景使用。
 - 流式与非流式共用同一条路径；`/v1/chat/completions`、`/v1/responses`、
   `/v1/messages` 均已覆盖。
 
@@ -72,6 +75,7 @@ plugins:
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
 | `enabled` | `true` | 是否启用按 Key 路由 |
+| `route_mode` | `provider` | `provider` 走 CPA 原生链路；`executor` 为旧兼容模式 |
 | `listen` | `127.0.0.1:8320` | 设置界面监听地址，只允许 loopback |
 | `cpa_base_url` | `http://127.0.0.1:8318` | 本机 CPA 地址，用于读取 `/v1/models` |
 | `cpa_config_path` | `/opt/cpa/config.yaml` | 只读取 `api-keys` 用于本机模型探测 |
@@ -80,6 +84,8 @@ plugins:
 | `alias_seed_file` | 空 | 可选的指纹 → 别名 JSON，便于界面辨认 Key |
 | `model_refresh_seconds` | `300` | 模型列表刷新间隔，最小 30 |
 | `session_ttl_seconds` | `28800` | 登录会话有效期，最小 300 |
+| `plugin_memory_limit_mb` | `96` | 插件自身 Go runtime 的软堆上限 |
+| `max_executor_body_mb` | `2` | 仅 executor 模式：超过该体积的请求体不路由、原样放行 |
 
 ## 打开设置界面
 
@@ -105,12 +111,15 @@ CPA 自己的端口上不会出现该界面；公网入口也不会暴露它。
 {
   "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef": {
     "alias": "team-a",
-    "target_model": "your-target-model"
+    "target_model": "your-target-model",
+    "target_provider": "openai-compatible-example"
   }
 }
 ```
 
 - key 为下游 API Key 的 sha256（小写十六进制）。
+- `target_provider` 可省略，省略时由 `/v1/models` 的 `owned_by` 和 `config.yaml`
+  自动解析；界面保存时会自动补全。
 - 路径由 `state_file` 指定，建议权限 600、属主为 CPA 运行用户。
 - 写入方式：同目录临时文件 + fsync + 原子 rename；保存后热加载，不需要重启 CPA。
 - 文件损坏时整体按“不路由”处理，请求继续走原生路径，并写 error 日志。
@@ -130,15 +139,32 @@ CPA 自己的端口上不会出现该界面；公网入口也不会暴露它。
 - 登录失败 5 次 / 10 分钟按 IP 限速。
 - 日志只记录 Key 的 sha256 前缀、模型名与来源 IP，不记录 Key、密码或 cookie。
 - 嵌套调用上游前会移除 `Authorization`、`X-Api-Key`、`Cookie` 等下游凭据头。
+- `GET /api/health` 免登录，只返回版本号；服务本身只监听 loopback。
+- 不带 `Origin` 的请求按同源处理，由 CSRF token 与 `SameSite=Strict` 兜底。
+
+## 内存
+
+- 插件与 CPA 在同一个进程里，但各自有独立的 Go runtime。宿主通过 `GOMEMLIMIT`
+  约束自己的堆；插件不会继承该约束的语义，而是用 `plugin_memory_limit_mb`
+  单独设置（默认 96 MiB）。
+- `provider` 模式下插件不复制请求体与响应流，因此大上下文请求的内存占用与
+  “完全不装插件”基本一致。
+- `executor` 模式下请求体需要跨 C ABI 传递，占用会随上下文体积放大；
+  `max_executor_body_mb` 是最后的保险丝。
 
 ## 已知限制
 
 - `count_tokens` 路径不经过 Key 路由，仍按原模型计数，避免把计数请求变成一次
   真实模型调用。
 - `/v1/responses` 非流式响应的 `model` 字段可能回显上游 provider 的别名；
-  路由本身已生效，chat / messages 路径通常显示目标模型名。
+  流式响应则回显客户端请求的模型名。两种情况下路由本身都已生效，
+  chat / messages 路径通常显示目标模型名。
 - 模型列表来自本机 `GET /v1/models`，使用 `cpa_config_path` 中前 3 个 `api-keys`
   作为本地探测凭据；不会外发，也不会写入日志。
+- `provider` 模式会把请求固定到解析出的 provider 上，因此不再享受 CPA 原生的
+  跨 provider 优先级与故障转移（同一 provider 内的多个凭据仍由 CPA 原生调度）。
+  需要跨 provider 时，请在状态文件里显式写 `target_provider`。
+- 目标模型在缓存中不存在时仍会按规则下发，由上游返回明确错误，不会静默回落。
 
 ## 许可
 

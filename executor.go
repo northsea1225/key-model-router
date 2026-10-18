@@ -18,6 +18,12 @@ func executeRequest(raw []byte) ([]byte, error) {
 	}
 	target, fingerprint, rewrite := resolveExecutionTarget(req)
 	body := requestBody(req)
+	if rewrite && executorBodyTooLarge(body) {
+		logWarn("key-model-router: request body exceeds max_executor_body_mb; passing through unrouted fp="+
+			fingerprintPrefix(fingerprint)+" bytes="+fmt.Sprintf("%d", len(body)), nil)
+		rewrite = false
+		target = strings.TrimSpace(req.Model)
+	}
 	if rewrite {
 		body = rewriteModel(body, target)
 	}
@@ -83,6 +89,12 @@ func executeStreamRequest(raw []byte) ([]byte, error) {
 		return errValidate, nil
 	}
 	body := requestBody(req)
+	if rewrite && executorBodyTooLarge(body) {
+		logWarn("key-model-router: stream body exceeds max_executor_body_mb; passing through unrouted fp="+
+			fingerprintPrefix(fingerprint)+" bytes="+fmt.Sprintf("%d", len(body)), nil)
+		rewrite = false
+		target = strings.TrimSpace(req.Model)
+	}
 	if rewrite {
 		body = rewriteModel(body, target)
 	}
@@ -201,6 +213,14 @@ func requestBody(req rpcExecutorRequest) []byte {
 		return append([]byte(nil), req.OriginalRequest...)
 	}
 	return append([]byte(nil), req.Payload...)
+}
+
+func executorBodyTooLarge(body []byte) bool {
+	limitMB := app.Config().MaxExecutorBodyMB
+	if limitMB <= 0 {
+		return false
+	}
+	return int64(len(body)) > int64(limitMB)<<20
 }
 
 // sanitizedHeaders removes downstream client credentials before the nested

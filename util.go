@@ -55,6 +55,26 @@ func normalizeAlias(value string) string {
 	return value
 }
 
+// normalizeProvider canonicalises a CPA provider key (the value CPA reports as
+// owned_by on /v1/models and uses for auth scheduling).
+func normalizeProvider(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if len(value) > 128 {
+		value = value[:128]
+	}
+	return value
+}
+
+func containsFold(values []string, want string) bool {
+	want = strings.TrimSpace(want)
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), want) {
+			return true
+		}
+	}
+	return false
+}
+
 func validFingerprint(value string) bool {
 	if len(value) != 64 {
 		return false

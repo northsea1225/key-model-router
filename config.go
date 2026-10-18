@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ import (
 
 type pluginConfig struct {
 	Enabled             bool   `yaml:"enabled"`
+	RouteMode           string `yaml:"route_mode"`
 	Listen              string `yaml:"listen"`
 	CPABaseURL          string `yaml:"cpa_base_url"`
 	CPAConfigPath       string `yaml:"cpa_config_path"`
@@ -24,11 +26,14 @@ type pluginConfig struct {
 	AliasSeedFile       string `yaml:"alias_seed_file"`
 	ModelRefreshSeconds int    `yaml:"model_refresh_seconds"`
 	SessionTTLSeconds   int    `yaml:"session_ttl_seconds"`
+	PluginMemoryLimitMB int    `yaml:"plugin_memory_limit_mb"`
+	MaxExecutorBodyMB   int    `yaml:"max_executor_body_mb"`
 }
 
 func defaultPluginConfig() pluginConfig {
 	return pluginConfig{
 		Enabled:             true,
+		RouteMode:           routeModeProvider,
 		Listen:              "127.0.0.1:8320",
 		CPABaseURL:          "http://127.0.0.1:8318",
 		CPAConfigPath:       "/opt/cpa/config.yaml",
@@ -37,8 +42,19 @@ func defaultPluginConfig() pluginConfig {
 		AliasSeedFile:       "",
 		ModelRefreshSeconds: 300,
 		SessionTTLSeconds:   8 * 60 * 60,
+		PluginMemoryLimitMB: 96,
+		MaxExecutorBodyMB:   2,
 	}
 }
+
+const (
+	// routeModeProvider lets CPA run the request on its native provider path with
+	// a rewritten target model. The plugin never touches the body or the stream.
+	routeModeProvider = "provider"
+	// routeModeExecutor keeps the legacy behaviour: the plugin takes the request
+	// over and calls back into the host, which copies the body across the ABI.
+	routeModeExecutor = "executor"
+)
 
 type lifecycleRequest struct {
 	ConfigYAML []byte `json:"config_yaml"`
@@ -52,6 +68,10 @@ func decodePluginConfig(raw []byte) (pluginConfig, error) {
 		}
 	}
 	cfg.Listen = strings.TrimSpace(cfg.Listen)
+	cfg.RouteMode = strings.ToLower(strings.TrimSpace(cfg.RouteMode))
+	if cfg.RouteMode == "" {
+		cfg.RouteMode = routeModeProvider
+	}
 	cfg.CPABaseURL = strings.TrimRight(strings.TrimSpace(cfg.CPABaseURL), "/")
 	cfg.CPAConfigPath = strings.TrimSpace(cfg.CPAConfigPath)
 	cfg.StateFile = strings.TrimSpace(cfg.StateFile)
@@ -63,6 +83,12 @@ func decodePluginConfig(raw []byte) (pluginConfig, error) {
 	if cfg.SessionTTLSeconds < 300 {
 		cfg.SessionTTLSeconds = 300
 	}
+	if cfg.PluginMemoryLimitMB < 32 {
+		cfg.PluginMemoryLimitMB = 32
+	}
+	if cfg.MaxExecutorBodyMB < 1 {
+		cfg.MaxExecutorBodyMB = 1
+	}
 	if errValidate := validatePluginConfig(cfg); errValidate != nil {
 		return pluginConfig{}, errValidate
 	}
@@ -72,6 +98,11 @@ func decodePluginConfig(raw []byte) (pluginConfig, error) {
 func validatePluginConfig(cfg pluginConfig) error {
 	if cfg.Listen == "" {
 		return fmt.Errorf("listen is required")
+	}
+	switch cfg.RouteMode {
+	case routeModeProvider, routeModeExecutor:
+	default:
+		return fmt.Errorf("route_mode must be %q or %q, got %q", routeModeProvider, routeModeExecutor, cfg.RouteMode)
 	}
 	host, port, errSplit := net.SplitHostPort(cfg.Listen)
 	if errSplit != nil {
@@ -120,12 +151,13 @@ func isLoopbackHost(host string) bool {
 }
 
 type runtime struct {
-	mu       sync.RWMutex
-	cfg      pluginConfig
-	state    *stateStore
-	models   *modelCache
-	sessions *sessionStore
-	ui       *uiServer
+	mu        sync.RWMutex
+	cfg       pluginConfig
+	state     *stateStore
+	models    *modelCache
+	providers *providerIndex
+	sessions  *sessionStore
+	ui        *uiServer
 }
 
 var app = &runtime{cfg: defaultPluginConfig()}
@@ -149,6 +181,10 @@ func shutdownRuntime() {
 }
 
 func (r *runtime) Configure(cfg pluginConfig) error {
+	// The plugin runs inside the CPA process but has its own Go runtime. Without
+	// an explicit cap it inherits GOMEMLIMIT and both runtimes target the same
+	// ceiling, which overshoots the cgroup limit under concurrent large requests.
+	debug.SetMemoryLimit(int64(cfg.PluginMemoryLimitMB) << 20)
 	r.mu.Lock()
 	r.cfg = cfg
 	if r.sessions == nil {
@@ -166,6 +202,10 @@ func (r *runtime) Configure(cfg pluginConfig) error {
 	} else {
 		r.models.reconfigure(cfg)
 	}
+	if r.providers == nil {
+		r.providers = newProviderIndex()
+	}
+	r.providers.Reload(cfg.CPAConfigPath)
 	// Load state and aliases eagerly so the first routed request is correct.
 	_ = r.state.Reload()
 	r.state.SeedAliases(cfg.AliasSeedFile)
@@ -201,6 +241,12 @@ func (r *runtime) Models() *modelCache {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.models
+}
+
+func (r *runtime) Providers() *providerIndex {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.providers
 }
 
 func (r *runtime) Sessions() *sessionStore {

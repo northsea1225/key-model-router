@@ -11,8 +11,9 @@ import (
 )
 
 type stateEntry struct {
-	Alias       string `json:"alias"`
-	TargetModel string `json:"target_model"`
+	Alias          string `json:"alias"`
+	TargetModel    string `json:"target_model"`
+	TargetProvider string `json:"target_provider,omitempty"`
 }
 
 type stateFile struct {
@@ -123,6 +124,7 @@ func parseStateFile(raw []byte) (map[string]stateEntry, error) {
 		}
 		entry.Alias = normalizeAlias(entry.Alias)
 		entry.TargetModel = normalizeTarget(entry.TargetModel)
+		entry.TargetProvider = normalizeProvider(entry.TargetProvider)
 		out[fingerprint] = entry
 	}
 	return out, nil
@@ -164,10 +166,18 @@ func (s *stateStore) Snapshot() (map[string]stateEntry, string) {
 }
 
 func (s *stateStore) Target(fingerprint string) string {
+	target, _ := s.Route(fingerprint)
+	return target
+}
+
+// Route returns the routing rule for a key fingerprint. The target model is
+// empty when the key is not routed.
+func (s *stateStore) Route(fingerprint string) (targetModel, targetProvider string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.maybeReloadLocked()
-	return normalizeTarget(s.entries[fingerprint].TargetModel)
+	entry := s.entries[fingerprint]
+	return normalizeTarget(entry.TargetModel), normalizeProvider(entry.TargetProvider)
 }
 
 func (s *stateStore) Alias(fingerprint string) string {
@@ -229,8 +239,9 @@ func (s *stateStore) SaveRows(rows []stateRow) (time.Time, error) {
 			return time.Time{}, fmt.Errorf("invalid fingerprint")
 		}
 		next[row.Fingerprint] = stateEntry{
-			Alias:       normalizeAlias(row.Alias),
-			TargetModel: normalizeTarget(row.TargetModel),
+			Alias:          normalizeAlias(row.Alias),
+			TargetModel:    normalizeTarget(row.TargetModel),
+			TargetProvider: normalizeProvider(row.TargetProvider),
 		}
 	}
 	raw, errMarshal := json.MarshalIndent(next, "", "  ")
@@ -284,9 +295,10 @@ func (s *stateStore) SaveRows(rows []stateRow) (time.Time, error) {
 }
 
 type stateRow struct {
-	Fingerprint string `json:"fingerprint"`
-	Alias       string `json:"alias"`
-	TargetModel string `json:"target_model"`
+	Fingerprint    string `json:"fingerprint"`
+	Alias          string `json:"alias"`
+	TargetModel    string `json:"target_model"`
+	TargetProvider string `json:"target_provider,omitempty"`
 }
 
 func sortedEntries(entries map[string]stateEntry) []string {

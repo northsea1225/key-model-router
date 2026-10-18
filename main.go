@@ -55,13 +55,24 @@ import "C"
 import (
 	"encoding/json"
 	"fmt"
+	"runtime/debug"
 	"unsafe"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
 )
 
+func init() {
+	// Cap this plugin's own Go heap from the start. The host process sets
+	// GOMEMLIMIT for its runtime only; without this the plugin's runtime would
+	// inherit the same ceiling and the two together overshoot the cgroup limit.
+	// Configure() applies the configured value once the host sends the config.
+	debug.SetMemoryLimit(int64(defaultPluginConfig().PluginMemoryLimitMB) << 20)
+}
+
 const pluginIdentifier = "key-model-router"
+
+const pluginVersion = "0.2.0"
 
 type envelope struct {
 	OK     bool            `json:"ok"`
@@ -167,17 +178,20 @@ func pluginRegistration() pluginRegistrationResponse {
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
 			Name:             pluginIdentifier,
-			Version:          "0.1.1",
+			Version:          pluginVersion,
 			Author:           "Bohan Hu",
 			GitHubRepository: "https://github.com/northsea1225/key-model-router",
 			ConfigFields: []pluginapi.ConfigField{
 				{Name: "enabled", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Enable per-key model routing."},
+				{Name: "route_mode", Type: pluginapi.ConfigFieldTypeString, Description: "\"provider\" (default) lets CPA execute natively; \"executor\" is the legacy in-plugin path."},
 				{Name: "cpa_base_url", Type: pluginapi.ConfigFieldTypeString, Description: "Loopback CPA base URL used to read /v1/models."},
 				{Name: "cpa_config_path", Type: pluginapi.ConfigFieldTypeString, Description: "CPA config.yaml path; used only to read api-keys for the local /v1/models probe."},
 				{Name: "state_file", Type: pluginapi.ConfigFieldTypeString, Description: "JSON state file (0600)."},
 				{Name: "password_file", Type: pluginapi.ConfigFieldTypeString, Description: "bcrypt hash file (0600)."},
 				{Name: "alias_seed_file", Type: pluginapi.ConfigFieldTypeString, Description: "Optional JSON alias seed generated from CPAMP."},
 				{Name: "listen", Type: pluginapi.ConfigFieldTypeString, Description: "Loopback listen address for the settings UI."},
+				{Name: "plugin_memory_limit_mb", Type: pluginapi.ConfigFieldTypeInteger, Description: "Soft heap limit for the plugin's own Go runtime (default 96)."},
+				{Name: "max_executor_body_mb", Type: pluginapi.ConfigFieldTypeInteger, Description: "executor mode only: bodies above this size pass through unrouted (default 2)."},
 			},
 		},
 		Capabilities: pluginRegistrationCapability{

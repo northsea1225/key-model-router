@@ -12,11 +12,12 @@ type cpaConfigFile struct {
 }
 
 type accountInfo struct {
-	Fingerprint string `json:"fingerprint"`
-	Masked      string `json:"masked"`
-	Alias       string `json:"alias"`
-	TargetModel string `json:"target_model"`
-	ValidTarget bool   `json:"valid_target"`
+	Fingerprint    string `json:"fingerprint"`
+	Masked         string `json:"masked"`
+	Alias          string `json:"alias"`
+	TargetModel    string `json:"target_model"`
+	TargetProvider string `json:"target_provider,omitempty"`
+	ValidTarget    bool   `json:"valid_target"`
 }
 
 func readCPAConfig(path string) (cpaConfigFile, error) {
@@ -51,18 +52,24 @@ func (r *runtime) Accounts() ([]accountInfo, error) {
 			continue
 		}
 		seen[fingerprint] = struct{}{}
-		target := state.Target(fingerprint)
+		target, provider := state.Route(fingerprint)
+		if provider == "" {
+			if cached, okProvider := models.Provider(target); okProvider {
+				provider = cached
+			}
+		}
 		validTarget := true
 		if target != "" {
 			known, present := models.Has(target)
 			validTarget = !known || present
 		}
 		out = append(out, accountInfo{
-			Fingerprint: fingerprint,
-			Masked:      maskSecret(key),
-			Alias:       state.Alias(fingerprint),
-			TargetModel: target,
-			ValidTarget: validTarget,
+			Fingerprint:    fingerprint,
+			Masked:         maskSecret(key),
+			Alias:          state.Alias(fingerprint),
+			TargetModel:    target,
+			TargetProvider: provider,
+			ValidTarget:    validTarget,
 		})
 	}
 	return out, nil
