@@ -12,14 +12,34 @@ CLIProxyAPI（CPA）8.0.31 插件：按下游 API Key 把请求固定路由到�
 - 默认 `route_mode: provider`：命中的 Key 返回 `TargetKind=provider` 加目标模型名，
   CPA 用**原生**链路执行请求，插件完全不接触请求体和响应流。没有额外拷贝，
   也不存在“插件再嵌套调用一次 CPA”的放大。
-- 目标模型所属 provider 由三处信息决定：状态文件里的 `target_provider`（优先）→
-  `/v1/models` 的 `owned_by` → `config.yaml` 里声明了该模型且配置了凭据的
-  `openai-compatibility` 条目。只接受 CPA 当前可用的 provider。
+- provider 默认「CPA 自动」：插件按 CPA 的候选顺序（`priority` 大者优先）在
+  **列出该目标模型**的 `openai-compatibility` 条目里挑选，并跳过当前没有可用凭据
+  的 provider，然后把请求交给 CPA 原生链路（凭据级重试、冷却仍由 CPA 负责）。
+- 状态文件里显式写 `target_provider` 时才固定到某一个 provider；界面里对应下拉框。
 - `route_mode: executor` 是兼容模式：插件接管请求、改写 `model` 后回调
   `host.model.execute`。功能等价，但请求体要跨 C ABI 复制，内存开销明显更高，
   只建议在 provider 模式无法覆盖的场景使用。
 - 流式与非流式共用同一条路径；`/v1/chat/completions`、`/v1/responses`、
   `/v1/messages` 均已覆盖。
+
+### 平台限制：无法把模型改写完全交回 CPA 的跨 provider 池
+
+CPA 8.0.31（以及最新的 8.0.33）的 `ModelRouteResponse` 只有三种目标
+（`sdk/pluginapi/types.go:626-660`）：`self`、`executor`、`provider`。没有
+“只改模型、provider 交给宿主”的选项：
+
+- `TargetKind=provider` 必须给出一个 `Target`，宿主用 `HasProviderAuth` 校验
+  （`internal/pluginhost/model_router.go:53-72`），只接受单个 provider key。
+- 命中 provider 后，宿主直接返回 `[]string{routeDecision.Provider}`，跳过
+  模型到 provider 的解析（`sdk/api/handlers/handlers_routing.go:148-160`）。
+- 执行侧的跨 provider 转移依赖这个列表（`sdk/cliproxy/auth/conductor_selection.go:2197-2203`
+  的 `providerSet` 过滤），单元素列表意味着只会在这一个 provider 的凭据内重试。
+- 尝试把 `Target` 设为池键 `"mixed"` 也走不通：宿主会记录
+  `model router returned unavailable provider` 并忽略该决策（实测，见下）。
+
+因此「Provider = CPA 自动」在本插件里的含义是：**按 CPA 的优先级选出同一个首选
+provider，再交给 CPA 原生执行**；跨 provider 的转移发生在选择阶段（跳过不可用
+provider），而不是请求中途。
 
 ## 安装
 
@@ -118,8 +138,8 @@ CPA 自己的端口上不会出现该界面；公网入口也不会暴露它。
 ```
 
 - key 为下游 API Key 的 sha256（小写十六进制）。
-- `target_provider` 可省略，省略时由 `/v1/models` 的 `owned_by` 和 `config.yaml`
-  自动解析；界面保存时会自动补全。
+- `target_provider` 可省略（即「CPA 自动」）：插件按 `config.yaml` 的优先级选出
+  首个可用 provider。填写时才固定到该 provider。
 - 路径由 `state_file` 指定，建议权限 600、属主为 CPA 运行用户。
 - 写入方式：同目录临时文件 + fsync + 原子 rename；保存后热加载，不需要重启 CPA。
 - 文件损坏时整体按“不路由”处理，请求继续走原生路径，并写 error 日志。
@@ -161,9 +181,9 @@ CPA 自己的端口上不会出现该界面；公网入口也不会暴露它。
   chat / messages 路径通常显示目标模型名。
 - 模型列表来自本机 `GET /v1/models`，使用 `cpa_config_path` 中前 3 个 `api-keys`
   作为本地探测凭据；不会外发，也不会写入日志。
-- `provider` 模式会把请求固定到解析出的 provider 上，因此不再享受 CPA 原生的
-  跨 provider 优先级与故障转移（同一 provider 内的多个凭据仍由 CPA 原生调度）。
-  需要跨 provider 时，请在状态文件里显式写 `target_provider`。
+- 请求最终仍会落到单个 provider 上，因此上游在该 provider 内彻底失败时不会自动
+  换到另一个 provider（同 provider 内的多凭据重试/冷却仍由 CPA 负责）。
+  想换目标时在界面里改 Provider，或留空让插件按优先级重新挑选。
 - 目标模型在缓存中不存在时仍会按规则下发，由上游返回明确错误，不会静默回落。
 
 ## 许可

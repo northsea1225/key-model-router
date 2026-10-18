@@ -123,7 +123,7 @@ function render(state){
   var top=el("div","top");
   var title=el("div");
   title.appendChild(el("h1",null,"Key Model Router"));
-  title.appendChild(el("p","sub","每个下游 API key 固定到一个目标模型；留空表示不路由。"+(state.route_mode==="executor"?"（当前为 executor 兼容模式）":"")));
+  title.appendChild(el("p","sub","每个下游 API key 固定到一个目标模型；留空表示不路由。Provider 默认「CPA 自动」。"+(state.route_mode==="executor"?"（当前为 executor 兼容模式）":"")));
   top.appendChild(title);
   var logout=el("button",null,"退出登录");
   logout.addEventListener("click",function(){
@@ -154,7 +154,7 @@ function render(state){
   var table=document.createElement("table");
   var thead=document.createElement("thead");
   var hr=document.createElement("tr");
-  ["别名","脱敏 Key","指纹","目标模型","Provider"].forEach(function(name){hr.appendChild(el("th",null,name));});
+  ["别名","脱敏 Key","指纹","目标模型","Provider（可选）"].forEach(function(name){hr.appendChild(el("th",null,name));});
   thead.appendChild(hr);table.appendChild(thead);
   var tbody=document.createElement("tbody");
   table.appendChild(tbody);
@@ -185,10 +185,32 @@ function render(state){
     select.value=target;
     targetTd.appendChild(select);tr.appendChild(targetTd);
     var providerTd=document.createElement("td");
-    var provider=document.createElement("input");provider.type="text";provider.maxLength=128;
-    var resolved=(state.model_providers||{})[target]||acc.target_provider||"";
+    var provider=document.createElement("select");
+    function fillProviders(){
+      var previous=provider.value;
+      clear(provider);
+      var model=select.value;
+      var autoName=(state.model_providers||{})[model]||"";
+      var auto=document.createElement("option");auto.value="";
+      auto.textContent=autoName?("CPA 自动（→ "+autoName+"）"):"CPA 自动";
+      provider.appendChild(auto);
+      var list=(state.model_provider_options||{})[model]||[];
+      list.forEach(function(p){
+        var o=document.createElement("option");o.value=p.name;
+        o.textContent=p.name+(p.priority?(" · P"+p.priority):"")+(p.usable===false?" · 不可用":"");
+        provider.appendChild(o);
+      });
+      provider.value=previous||"";
+      if(previous&&provider.value!==previous){
+        var stale=document.createElement("option");stale.value=previous;
+        stale.textContent=previous+" · 未在该模型的配置中";
+        provider.appendChild(stale);provider.value=previous;
+      }
+      provider.disabled=!model;
+    }
     provider.value=acc.target_provider||"";
-    provider.placeholder=resolved?resolved:"自动";
+    fillProviders();
+    select.addEventListener("change",function(){provider.value="";fillProviders();});
     providerTd.appendChild(provider);tr.appendChild(providerTd);
     tbody.appendChild(tr);
     rows.push({fingerprint:acc.fingerprint,alias:alias,select:select,provider:provider,tr:tr});

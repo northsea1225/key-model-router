@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -12,12 +13,21 @@ type cpaConfigFile struct {
 }
 
 type accountInfo struct {
-	Fingerprint    string `json:"fingerprint"`
-	Masked         string `json:"masked"`
-	Alias          string `json:"alias"`
-	TargetModel    string `json:"target_model"`
-	TargetProvider string `json:"target_provider,omitempty"`
-	ValidTarget    bool   `json:"valid_target"`
+	Fingerprint    string           `json:"fingerprint"`
+	Masked         string           `json:"masked"`
+	Alias          string           `json:"alias"`
+	TargetModel    string           `json:"target_model"`
+	TargetProvider string           `json:"target_provider,omitempty"`
+	AutoProvider   string           `json:"auto_provider,omitempty"`
+	ProviderList   []providerOption `json:"provider_list,omitempty"`
+	ValidTarget    bool             `json:"valid_target"`
+}
+
+// providerOption is one selectable provider in the settings UI.
+type providerOption struct {
+	Name     string `json:"name"`
+	Priority int    `json:"priority"`
+	Usable   bool   `json:"usable"`
 }
 
 func readCPAConfig(path string) (cpaConfigFile, error) {
@@ -53,15 +63,29 @@ func (r *runtime) Accounts() ([]accountInfo, error) {
 		}
 		seen[fingerprint] = struct{}{}
 		target, provider := state.Route(fingerprint)
-		if provider == "" {
-			if cached, okProvider := models.Provider(target); okProvider {
-				provider = cached
-			}
-		}
 		validTarget := true
 		if target != "" {
 			known, present := models.Has(target)
 			validTarget = !known || present
+		}
+		autoProvider := ""
+		var options []providerOption
+		if target != "" {
+			autoProvider = r.AutoProvider(target)
+			if index := r.Providers(); index != nil {
+				for _, candidate := range index.CandidatesFor(target) {
+					usable, _ := r.ProviderUsable(candidate.Name)
+					options = append(options, providerOption{
+						Name:     candidate.Name,
+						Priority: candidate.Priority,
+						Usable:   usable,
+					})
+				}
+			}
+			if provider != "" && !hasOption(options, provider) {
+				usable, _ := r.ProviderUsable(provider)
+				options = append(options, providerOption{Name: provider, Usable: usable})
+			}
 		}
 		out = append(out, accountInfo{
 			Fingerprint:    fingerprint,
@@ -69,10 +93,41 @@ func (r *runtime) Accounts() ([]accountInfo, error) {
 			Alias:          state.Alias(fingerprint),
 			TargetModel:    target,
 			TargetProvider: provider,
+			AutoProvider:   autoProvider,
+			ProviderList:   options,
 			ValidTarget:    validTarget,
 		})
 	}
 	return out, nil
+}
+
+func hasOption(options []providerOption, name string) bool {
+	for _, option := range options {
+		if strings.EqualFold(option.Name, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// providerListsModel reports whether the provider is known to serve the model,
+// either from config.yaml or from the /v1/models owner field.
+func providerListsModel(r *runtime, model, provider string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return false
+	}
+	if index := r.Providers(); index != nil {
+		for _, candidate := range index.CandidatesFor(model) {
+			if strings.EqualFold(candidate.Name, provider) || candidate.Provider == provider {
+				return true
+			}
+		}
+	}
+	if owner, okOwner := r.Models().Provider(model); okOwner {
+		return strings.EqualFold(owner, provider)
+	}
+	return false
 }
 
 // modelProbeKeys returns up to limit API keys from the CPA config. The values

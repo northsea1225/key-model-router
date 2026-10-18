@@ -156,6 +156,7 @@ type runtime struct {
 	state     *stateStore
 	models    *modelCache
 	providers *providerIndex
+	auths     *authSnapshot
 	sessions  *sessionStore
 	ui        *uiServer
 }
@@ -206,6 +207,10 @@ func (r *runtime) Configure(cfg pluginConfig) error {
 		r.providers = newProviderIndex()
 	}
 	r.providers.Reload(cfg.CPAConfigPath)
+	if r.auths == nil {
+		r.auths = newAuthSnapshot()
+	}
+	r.auths.Start(20 * time.Second)
 	// Load state and aliases eagerly so the first routed request is correct.
 	_ = r.state.Reload()
 	r.state.SeedAliases(cfg.AliasSeedFile)
@@ -249,6 +254,73 @@ func (r *runtime) Providers() *providerIndex {
 	return r.providers
 }
 
+func (r *runtime) Auths() *authSnapshot {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.auths
+}
+
+// AutoProvider reports which configured provider the router would pick for the
+// model when no explicit provider is stored.
+func (r *runtime) AutoProvider(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	if index := r.Providers(); index != nil {
+		for _, candidate := range index.CandidatesFor(model) {
+			if health, okHealth := r.Auths().Health(candidate.Provider); okHealth && health.Usable == 0 {
+				continue
+			}
+			return candidate.Name
+		}
+	}
+	if cached, okProvider := r.Models().Provider(model); okProvider {
+		return cached
+	}
+	return ""
+}
+
+// ProviderUsable reports whether at least one credential of the provider is
+// usable right now. The second result is false when no snapshot exists yet.
+func (r *runtime) ProviderUsable(provider string) (bool, bool) {
+	health, okHealth := r.Auths().Health(openAICompatProviderKey(provider))
+	if !okHealth {
+		health, okHealth = r.Auths().Health(provider)
+	}
+	if !okHealth {
+		return true, false
+	}
+	return health.Usable > 0, true
+}
+
+// ModelProviderOptions returns, per model, the providers that list it in
+// config.yaml, best first. The settings UI uses it to render the provider
+// dropdown for whichever target model is selected.
+func (r *runtime) ModelProviderOptions() map[string][]providerOption {
+	out := make(map[string][]providerOption)
+	index := r.Providers()
+	if index == nil {
+		return out
+	}
+	for _, model := range index.Models() {
+		candidates := index.CandidatesFor(model)
+		options := make([]providerOption, 0, len(candidates))
+		for _, candidate := range candidates {
+			usable, _ := r.ProviderUsable(candidate.Name)
+			options = append(options, providerOption{
+				Name:     candidate.Name,
+				Priority: candidate.Priority,
+				Usable:   usable,
+			})
+		}
+		if len(options) > 0 {
+			out[model] = options
+		}
+	}
+	return out
+}
+
 func (r *runtime) Sessions() *sessionStore {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -259,6 +331,7 @@ func (r *runtime) Close() {
 	r.mu.Lock()
 	ui := r.ui
 	models := r.models
+	auths := r.auths
 	r.ui = nil
 	r.mu.Unlock()
 	if ui != nil {
@@ -266,6 +339,9 @@ func (r *runtime) Close() {
 	}
 	if models != nil {
 		models.Close()
+	}
+	if auths != nil {
+		auths.Close()
 	}
 }
 

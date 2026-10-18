@@ -208,20 +208,21 @@ func (h *uiHandler) handleState(w http.ResponseWriter, r *http.Request) {
 		savedAt = info.ModTime().Format(time.RFC3339)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":                  true,
-		"accounts":            accounts,
-		"models":              models,
-		"models_count":        count,
-		"models_fetched_at":   formatTime(fetchedAt),
-		"models_error":        modelsErr,
-		"state_error":         stateErr,
-		"saved_at":            savedAt,
-		"csrf":                sess.CSRF,
-		"version":             pluginVersion,
-		"route_mode":          cfg.RouteMode,
-		"model_providers":     h.rt.Models().Providers(),
-		"password_configured": checkPasswordFile(cfg.PasswordFile) == nil,
-		"listen":              cfg.Listen,
+		"ok":                     true,
+		"accounts":               accounts,
+		"models":                 models,
+		"models_count":           count,
+		"models_fetched_at":      formatTime(fetchedAt),
+		"models_error":           modelsErr,
+		"state_error":            stateErr,
+		"saved_at":               savedAt,
+		"csrf":                   sess.CSRF,
+		"version":                pluginVersion,
+		"route_mode":             cfg.RouteMode,
+		"model_providers":        h.rt.Models().Providers(),
+		"model_provider_options": h.rt.ModelProviderOptions(),
+		"password_configured":    checkPasswordFile(cfg.PasswordFile) == nil,
+		"listen":                 cfg.Listen,
 	})
 }
 
@@ -371,16 +372,11 @@ func (h *uiHandler) handleSave(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
-			if provider == "" {
-				if cached, okProvider := h.rt.Models().Provider(target); okProvider {
-					provider = cached
-				}
-			}
-			if provider == "" {
+			if provider != "" && !providerListsModel(h.rt, target, provider) {
 				writeJSON(w, http.StatusBadRequest, map[string]any{
-					"error":       "target model has no known provider; reselect the model",
+					"error":       "selected provider does not list the target model: " + provider,
 					"fingerprint": row.Fingerprint,
-					"field":       "target_model",
+					"field":       "target_provider",
 				})
 				return
 			}

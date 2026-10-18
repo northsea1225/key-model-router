@@ -68,9 +68,17 @@ func routeModelRequest(raw []byte) ([]byte, error) {
 	})
 }
 
-// resolveProvider picks a provider key that CPA reports as available. An
-// explicit rule wins; otherwise the /v1/models owner is preferred, then any
-// configured provider that lists the model and has a usable credential.
+// resolveProvider picks a provider key that CPA reports as available.
+//
+// An explicit rule wins. Otherwise ("auto") the router mirrors CPA's own
+// ordering: providers that list the model, highest priority first, skipping any
+// provider whose credentials are all unavailable or cooling down. The request
+// then runs on CPA's native path for that provider, including credential-level
+// retry and cooldown handling.
+//
+// Note: CPI 8.0.31 cannot express "rewrite the model but keep the native
+// cross-provider pool"; Target accepts one provider key. Cross-provider failover
+// therefore happens at selection time (skip unusable providers), not mid-request.
 func resolveProvider(explicit, target string, available []string) (string, string) {
 	if explicit = normalizeProvider(explicit); explicit != "" {
 		if matched, okMatch := matchAvailableProvider(available, explicit); okMatch {
@@ -78,19 +86,23 @@ func resolveProvider(explicit, target string, available []string) (string, strin
 		}
 		return "", "explicit provider " + explicit + " is not available"
 	}
+	if index := app.Providers(); index != nil {
+		for _, candidate := range index.CandidatesFor(target) {
+			if len(available) > 0 && !containsFold(available, candidate.Provider) {
+				continue
+			}
+			if health, okHealth := app.Auths().Health(candidate.Provider); okHealth && health.Usable == 0 {
+				continue
+			}
+			return candidate.Provider, ""
+		}
+	}
 	if cached, okProvider := app.Models().Provider(target); okProvider {
 		if matched, okMatch := matchAvailableProvider(available, cached); okMatch {
 			return matched, ""
 		}
 	}
-	if index := app.Providers(); index != nil {
-		for _, candidate := range index.ProvidersFor(target) {
-			if containsFold(available, candidate) {
-				return candidate, ""
-			}
-		}
-	}
-	return "", "no available provider serves this model"
+	return "", "no configured provider serves this model with a usable credential"
 }
 
 // matchAvailableProvider resolves a bare provider name (entry name, or the
