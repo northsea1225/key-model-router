@@ -321,6 +321,23 @@ func (r *runtime) ModelProviderOptions() map[string][]providerOption {
 	return out
 }
 
+// ModelAutoProviders returns the provider the router would pick for each model
+// when the rule has no explicit provider. It is the value the settings UI shows
+// next to "CPA 自动", so the label always matches the routing decision.
+func (r *runtime) ModelAutoProviders() map[string]string {
+	out := make(map[string]string)
+	index := r.Providers()
+	if index == nil {
+		return out
+	}
+	for _, model := range index.Models() {
+		if provider := r.AutoProvider(model); provider != "" {
+			out[model] = provider
+		}
+	}
+	return out
+}
+
 func (r *runtime) Sessions() *sessionStore {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

@@ -221,6 +221,7 @@ func (h *uiHandler) handleState(w http.ResponseWriter, r *http.Request) {
 		"route_mode":             cfg.RouteMode,
 		"model_providers":        h.rt.Models().Providers(),
 		"model_provider_options": h.rt.ModelProviderOptions(),
+		"auto_providers":         h.rt.ModelAutoProviders(),
 		"password_configured":    checkPasswordFile(cfg.PasswordFile) == nil,
 		"listen":                 cfg.Listen,
 	})

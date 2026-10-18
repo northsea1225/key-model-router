@@ -190,7 +190,7 @@ function render(state){
       var previous=provider.value;
       clear(provider);
       var model=select.value;
-      var autoName=(state.model_providers||{})[model]||"";
+      var autoName=(state.auto_providers||{})[model]||(acc.auto_provider&&model===target?acc.auto_provider:"")||(state.model_providers||{})[model]||"";
       var auto=document.createElement("option");auto.value="";
       auto.textContent=autoName?("CPA 自动（→ "+autoName+"）"):"CPA 自动";
       provider.appendChild(auto);
