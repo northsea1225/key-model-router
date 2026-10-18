@@ -25,10 +25,12 @@ type accountInfo struct {
 
 // providerOption is one selectable provider in the settings UI.
 type providerOption struct {
-	Name     string `json:"name"`
-	Priority int    `json:"priority"`
-	Usable   bool   `json:"usable"`
-	Source   string `json:"source,omitempty"`
+	Name        string `json:"name"`
+	Priority    int    `json:"priority"`
+	Usable      bool   `json:"usable"`
+	Source      string `json:"source,omitempty"`
+	Credentials int    `json:"credentials,omitempty"`
+	Available   int    `json:"available,omitempty"`
 }
 
 func readCPAConfig(path string) (cpaConfigFile, error) {
@@ -76,11 +78,17 @@ func (r *runtime) Accounts() ([]accountInfo, error) {
 			if index := r.Providers(); index != nil {
 				for _, candidate := range index.CandidatesFor(target) {
 					usable, _ := r.ProviderUsable(candidate.Name)
+					usableCount, total := r.ProviderCounts(candidate.Name)
+					if candidate.Count > 0 {
+						total = candidate.Count
+					}
 					options = append(options, providerOption{
-						Name:     candidate.Name,
-						Priority: candidate.Priority,
-						Usable:   usable,
-						Source:   candidate.Source,
+						Name:        candidate.Name,
+						Priority:    candidate.Priority,
+						Usable:      usable,
+						Source:      candidate.Source,
+						Credentials: total,
+						Available:   usableCount,
 					})
 				}
 			}

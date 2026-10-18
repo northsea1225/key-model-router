@@ -72,7 +72,7 @@ func init() {
 
 const pluginIdentifier = "key-model-router"
 
-const pluginVersion = "0.4.0"
+const pluginVersion = "0.4.1"
 
 type envelope struct {
 	OK     bool            `json:"ok"`

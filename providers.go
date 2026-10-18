@@ -24,6 +24,9 @@ type providerCandidate struct {
 	// Source is "config" when the model is listed for the provider in
 	// config.yaml, and "oauth" when the provider only matches by model family.
 	Source string
+	// Count is how many credentials back this provider (config entries plus
+	// OAuth accounts of the same type).
+	Count int
 }
 
 const (
@@ -111,7 +114,11 @@ func (p *providerIndex) Reload(path string) {
 			if candidate.Priority > existing.Priority {
 				byName[model][i].Priority = candidate.Priority
 			}
+			byName[model][i].Count++
 			return
+		}
+		if candidate.Count == 0 {
+			candidate.Count = 1
 		}
 		byName[model] = append(byName[model], candidate)
 	}
@@ -251,6 +258,7 @@ func scanOAuthProviders(authDir, configDir string) []providerCandidate {
 			Provider: provider,
 			Priority: entry.priority,
 			Source:   providerSourceOAuth,
+			Count:    entry.count,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Provider < out[j].Provider })
@@ -293,7 +301,9 @@ func (p *providerIndex) CandidatesFor(model string) []providerCandidate {
 	oauth := p.oauthProviders
 	p.mu.RUnlock()
 	for _, candidate := range oauth {
-		if hasCandidate(out, candidate.Provider) {
+		if idx := candidateIndex(out, candidate.Provider); idx >= 0 {
+			// Same provider key: fold the OAuth accounts into the credential count.
+			out[idx].Count += candidate.Count
 			continue
 		}
 		if !providerServesModelFamily(candidate.Provider, model) {
@@ -303,6 +313,15 @@ func (p *providerIndex) CandidatesFor(model string) []providerCandidate {
 	}
 	sortCandidates(out)
 	return out
+}
+
+func candidateIndex(candidates []providerCandidate, provider string) int {
+	for i, candidate := range candidates {
+		if candidate.Provider == provider {
+			return i
+		}
+	}
+	return -1
 }
 
 // providerServesModelFamily is the heuristic used for OAuth accounts, which do

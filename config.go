@@ -300,6 +300,19 @@ func (r *runtime) ProviderUsable(provider string) (bool, bool) {
 	return health.Usable > 0, true
 }
 
+// ProviderCounts reports how many credentials the provider has and how many of
+// them are usable right now.
+func (r *runtime) ProviderCounts(provider string) (usable, total int) {
+	health, okHealth := r.Auths().Health(openAICompatProviderKey(provider))
+	if !okHealth {
+		health, okHealth = r.Auths().Health(provider)
+	}
+	if !okHealth {
+		return 0, 0
+	}
+	return health.Usable, health.Credentials
+}
+
 // ModelProviderOptions returns, per model, the providers that list it in
 // config.yaml, best first. The settings UI uses it to render the provider
 // dropdown for whichever target model is selected.
@@ -322,11 +335,17 @@ func (r *runtime) ModelProviderOptions() map[string][]providerOption {
 		options := make([]providerOption, 0, len(candidates))
 		for _, candidate := range candidates {
 			usable, _ := r.ProviderUsable(candidate.Name)
+			usableCount, total := r.ProviderCounts(candidate.Name)
+			if candidate.Count > 0 {
+				total = candidate.Count
+			}
 			options = append(options, providerOption{
-				Name:     candidate.Name,
-				Priority: candidate.Priority,
-				Usable:   usable,
-				Source:   candidate.Source,
+				Name:        candidate.Name,
+				Priority:    candidate.Priority,
+				Usable:      usable,
+				Source:      candidate.Source,
+				Credentials: total,
+				Available:   usableCount,
 			})
 		}
 		if len(options) > 0 {
