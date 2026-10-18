@@ -186,8 +186,7 @@ function render(state){
     targetTd.appendChild(select);tr.appendChild(targetTd);
     var providerTd=document.createElement("td");
     var provider=document.createElement("select");
-    function fillProviders(){
-      var previous=provider.value;
+    function fillProviders(wanted){
       clear(provider);
       var model=select.value;
       var autoName=(state.auto_providers||{})[model]||(acc.auto_provider&&model===target?acc.auto_provider:"")||(state.model_providers||{})[model]||"";
@@ -200,17 +199,16 @@ function render(state){
         o.textContent=p.name+(p.priority?(" · P"+p.priority):"")+(p.usable===false?" · 不可用":"");
         provider.appendChild(o);
       });
-      provider.value=previous||"";
-      if(previous&&provider.value!==previous){
-        var stale=document.createElement("option");stale.value=previous;
-        stale.textContent=previous+" · 未在该模型的配置中";
-        provider.appendChild(stale);provider.value=previous;
+      provider.value=wanted||"";
+      if(wanted&&provider.value!==wanted){
+        var stale=document.createElement("option");stale.value=wanted;
+        stale.textContent=wanted+" · 未在该模型的配置中";
+        provider.appendChild(stale);provider.value=wanted;
       }
       provider.disabled=!model;
     }
-    provider.value=acc.target_provider||"";
-    fillProviders();
-    select.addEventListener("change",function(){provider.value="";fillProviders();});
+    fillProviders(acc.target_provider||"");
+    select.addEventListener("change",function(){fillProviders("");});
     providerTd.appendChild(provider);tr.appendChild(providerTd);
     tbody.appendChild(tr);
     rows.push({fingerprint:acc.fingerprint,alias:alias,select:select,provider:provider,tr:tr});
