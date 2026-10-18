@@ -28,6 +28,7 @@ type providerOption struct {
 	Name     string `json:"name"`
 	Priority int    `json:"priority"`
 	Usable   bool   `json:"usable"`
+	Source   string `json:"source,omitempty"`
 }
 
 func readCPAConfig(path string) (cpaConfigFile, error) {
@@ -79,6 +80,7 @@ func (r *runtime) Accounts() ([]accountInfo, error) {
 						Name:     candidate.Name,
 						Priority: candidate.Priority,
 						Usable:   usable,
+						Source:   candidate.Source,
 					})
 				}
 			}

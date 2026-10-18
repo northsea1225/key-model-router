@@ -268,11 +268,17 @@ func (r *runtime) AutoProvider(model string) string {
 		return ""
 	}
 	if index := r.Providers(); index != nil {
-		for _, candidate := range index.CandidatesFor(model) {
-			if health, okHealth := r.Auths().Health(candidate.Provider); okHealth && health.Usable == 0 {
-				continue
+		candidates := index.CandidatesFor(model)
+		for _, exact := range []bool{true, false} {
+			for _, candidate := range candidates {
+				if (candidate.Source == providerSourceConfig) != exact {
+					continue
+				}
+				if health, okHealth := r.Auths().Health(candidate.Provider); okHealth && health.Usable == 0 {
+					continue
+				}
+				return candidate.Name
 			}
-			return candidate.Name
 		}
 	}
 	if cached, okProvider := r.Models().Provider(model); okProvider {
@@ -303,7 +309,15 @@ func (r *runtime) ModelProviderOptions() map[string][]providerOption {
 	if index == nil {
 		return out
 	}
-	for _, model := range index.Models() {
+	models := index.Models()
+	if cache := r.Models(); cache != nil {
+		for _, model := range cache.List() {
+			if !containsFold(models, model) {
+				models = append(models, model)
+			}
+		}
+	}
+	for _, model := range models {
 		candidates := index.CandidatesFor(model)
 		options := make([]providerOption, 0, len(candidates))
 		for _, candidate := range candidates {
@@ -312,6 +326,7 @@ func (r *runtime) ModelProviderOptions() map[string][]providerOption {
 				Name:     candidate.Name,
 				Priority: candidate.Priority,
 				Usable:   usable,
+				Source:   candidate.Source,
 			})
 		}
 		if len(options) > 0 {

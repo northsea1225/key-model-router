@@ -196,7 +196,7 @@ function render(state){
       var list=(state.model_provider_options||{})[model]||[];
       list.forEach(function(p){
         var o=document.createElement("option");o.value=p.name;
-        o.textContent=p.name+(p.priority?(" · P"+p.priority):"")+(p.usable===false?" · 不可用":"");
+        o.textContent=p.name+(p.priority?(" · P"+p.priority):"")+(p.source==="oauth"?" · OAuth 推断":"")+(p.usable===false?" · 不可用":"");
         provider.appendChild(o);
       });
       provider.value=wanted||"";

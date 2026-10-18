@@ -87,14 +87,30 @@ func resolveProvider(explicit, target string, available []string) (string, strin
 		return "", "explicit provider " + explicit + " is not available"
 	}
 	if index := app.Providers(); index != nil {
-		for _, candidate := range index.CandidatesFor(target) {
-			if len(available) > 0 && !containsFold(available, candidate.Provider) {
-				continue
+		candidates := index.CandidatesFor(target)
+		pick := func(exact bool) (string, bool) {
+			for _, candidate := range candidates {
+				isExact := candidate.Source == providerSourceConfig
+				if isExact != exact {
+					continue
+				}
+				if len(available) > 0 && !containsFold(available, candidate.Provider) {
+					continue
+				}
+				if health, okHealth := app.Auths().Health(candidate.Provider); okHealth && health.Usable == 0 {
+					continue
+				}
+				return candidate.Provider, true
 			}
-			if health, okHealth := app.Auths().Health(candidate.Provider); okHealth && health.Usable == 0 {
-				continue
-			}
-			return candidate.Provider, ""
+			return "", false
+		}
+		// Exact config matches win; OAuth family matches are the fallback because
+		// they are inferred from the credential type rather than a model list.
+		if provider, okPick := pick(true); okPick {
+			return provider, ""
+		}
+		if provider, okPick := pick(false); okPick {
+			return provider, ""
 		}
 	}
 	if cached, okProvider := app.Models().Provider(target); okProvider {
